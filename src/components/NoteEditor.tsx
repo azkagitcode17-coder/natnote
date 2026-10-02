@@ -31,6 +31,8 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
   const [tagInput, setTagInput] = useState('');
   const [isFavorite, setIsFavorite] = useState(note.isFavorite || false);
   const [isPinned, setIsPinned] = useState(note.isPinned || false);
+  const [isLocked, setIsLocked] = useState(note.isLocked || false);
+  const [pinCode, setPinCode] = useState(note.pinCode || '');
   const [colorTone, setColorTone] = useState<NoteColorTone>(note.colorTone || 'default');
   const [checklists, setChecklists] = useState<ChecklistItem[]>(note.checklists || []);
   const [newChecklistText, setNewChecklistText] = useState('');
@@ -41,54 +43,9 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const saveTimeoutRef = useRef<number | null>(null);
+  const isClosingRef = useRef<boolean>(false);
 
-  // Synchronous reference to always have the latest note state
-  const currentNoteRef = useRef<Note>({
-    ...note,
-    title: note.title || '',
-    content: note.content || '',
-    category: note.category || 'Catatan Pribadi',
-    tags: note.tags || [],
-    isFavorite: note.isFavorite || false,
-    isPinned: note.isPinned || false,
-    colorTone: note.colorTone || 'default',
-    checklists: note.checklists || [],
-  });
-
-  // Flush immediate save
-  const flushSave = () => {
-    if (saveTimeoutRef.current) {
-      clearTimeout(saveTimeoutRef.current);
-      saveTimeoutRef.current = null;
-    }
-    const snapshot: Note = {
-      ...currentNoteRef.current,
-      updatedAt: new Date().toISOString(),
-    };
-    currentNoteRef.current = snapshot;
-    onSave(snapshot);
-    setIsSaving(false);
-    setLastSavedTime('Tersimpan otomatis');
-  };
-
-  // Debounced background save
-  const scheduleSave = () => {
-    setIsSaving(true);
-    if (saveTimeoutRef.current) {
-      clearTimeout(saveTimeoutRef.current);
-    }
-    saveTimeoutRef.current = window.setTimeout(() => {
-      flushSave();
-    }, 400);
-  };
-
-  // Safe close that guarantees saving before exit
-  const handleSafeClose = () => {
-    flushSave();
-    onClose();
-  };
-
-  // Keep state updated if note.id switches
+  // Sync if note prop updates from outside (e.g. PIN modal)
   useEffect(() => {
     setTitle(note.title || '');
     setContent(note.content || '');
@@ -96,48 +53,77 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
     setTags(note.tags || []);
     setIsFavorite(note.isFavorite || false);
     setIsPinned(note.isPinned || false);
+    setIsLocked(note.isLocked || false);
+    setPinCode(note.pinCode || '');
     setColorTone(note.colorTone || 'default');
     setChecklists(note.checklists || []);
     setShowChecklistMode((note.checklists && note.checklists.length > 0) || false);
+  }, [note.id, note.isLocked, note.pinCode]);
 
-    currentNoteRef.current = {
+  // Construct current state of the note
+  const getNoteSnapshot = (overrides?: Partial<Note>): Note => {
+    return {
       ...note,
-      title: note.title || '',
-      content: note.content || '',
-      category: note.category || 'Catatan Pribadi',
-      tags: note.tags || [],
-      isFavorite: note.isFavorite || false,
-      isPinned: note.isPinned || false,
-      colorTone: note.colorTone || 'default',
-      checklists: note.checklists || [],
+      title,
+      content,
+      category,
+      tags,
+      isFavorite,
+      isPinned,
+      isLocked,
+      pinCode,
+      colorTone,
+      checklists,
+      ...overrides,
+      updatedAt: new Date().toISOString(),
     };
-  }, [note.id]);
-
-  // Clean up and ensure data is saved when component unmounts
-  useEffect(() => {
-    return () => {
-      flushSave();
-    };
-  }, []);
-
-  // Title change handler
-  const handleTitleChange = (val: string) => {
-    setTitle(val);
-    currentNoteRef.current = {
-      ...currentNoteRef.current,
-      title: val,
-    };
-    scheduleSave();
   };
 
-  // Description / Content change handler
-  const handleContentChange = (val: string) => {
-    setContent(val);
-    currentNoteRef.current = {
-      ...currentNoteRef.current,
-      content: val,
-    };
-    scheduleSave();
+  // Immediate synchronous save
+  const saveImmediately = (overrides?: Partial<Note>) => {
+    if (isClosingRef.current) return;
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+      saveTimeoutRef.current = null;
+    }
+    const snapshot = getNoteSnapshot(overrides);
+    onSave(snapshot);
+    setIsSaving(false);
+    setLastSavedTime('Tersimpan otomatis');
+  };
+
+  // Debounced auto-save on keystrokes
+  const triggerDebouncedSave = (overrides?: Partial<Note>) => {
+    if (isClosingRef.current) return;
+    setIsSaving(true);
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+    }
+    saveTimeoutRef.current = window.setTimeout(() => {
+      saveImmediately(overrides);
+    }, 350);
+  };
+
+  // Safe close handler: guarantees save and then closes without glitch
+  const handleSafeClose = (e?: React.MouseEvent) => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    if (isClosingRef.current) return;
+    isClosingRef.current = true;
+
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+      saveTimeoutRef.current = null;
+    }
+
+    // Save final version synchronously
+    const finalNote = getNoteSnapshot();
+    onSave(finalNote);
+
+    // Call close to exit editor
+    onClose();
   };
 
   // Auto-resize textarea so content expands naturally
@@ -158,7 +144,8 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
     const selectedText = currentText.substring(start, end);
     const newText = currentText.substring(0, start) + prefix + selectedText + suffix + currentText.substring(end);
     
-    handleContentChange(newText);
+    setContent(newText);
+    triggerDebouncedSave({ content: newText });
 
     setTimeout(() => {
       el.focus();
@@ -174,8 +161,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
       if (clean && !tags.includes(clean)) {
         const nextTags = [...tags, clean];
         setTags(nextTags);
-        currentNoteRef.current = { ...currentNoteRef.current, tags: nextTags };
-        scheduleSave();
+        saveImmediately({ tags: nextTags });
       }
       setTagInput('');
     }
@@ -184,8 +170,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
   const handleRemoveTag = (tagToRemove: string) => {
     const nextTags = tags.filter((t) => t !== tagToRemove);
     setTags(nextTags);
-    currentNoteRef.current = { ...currentNoteRef.current, tags: nextTags };
-    scheduleSave();
+    saveImmediately({ tags: nextTags });
   };
 
   // Checklist actions
@@ -200,8 +185,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
     const nextChecklists = [...checklists, newItem];
     setChecklists(nextChecklists);
     setNewChecklistText('');
-    currentNoteRef.current = { ...currentNoteRef.current, checklists: nextChecklists };
-    scheduleSave();
+    saveImmediately({ checklists: nextChecklists });
   };
 
   const handleToggleChecklist = (id: string) => {
@@ -209,15 +193,13 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
       c.id === id ? { ...c, done: !c.done } : c
     );
     setChecklists(nextChecklists);
-    currentNoteRef.current = { ...currentNoteRef.current, checklists: nextChecklists };
-    scheduleSave();
+    saveImmediately({ checklists: nextChecklists });
   };
 
   const handleDeleteChecklist = (id: string) => {
     const nextChecklists = checklists.filter((c) => c.id !== id);
     setChecklists(nextChecklists);
-    currentNoteRef.current = { ...currentNoteRef.current, checklists: nextChecklists };
-    scheduleSave();
+    saveImmediately({ checklists: nextChecklists });
   };
 
   // Export note actions
@@ -275,7 +257,9 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
       {/* Editor Top Navigation Bar */}
       <header className="sticky top-0 z-30 bg-[#FAF8F5]/95 backdrop-blur-md border-b border-[#E8DDCB] px-3 sm:px-6 py-2.5 flex items-center justify-between no-print shadow-xs">
         <div className="flex items-center gap-2">
+          {/* Back button */}
           <button
+            type="button"
             onClick={handleSafeClose}
             className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl text-[#10625B] hover:bg-[#E8DDCB]/50 transition-colors cursor-pointer"
             aria-label="Kembali ke daftar catatan"
@@ -311,8 +295,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
                     type="button"
                     onClick={() => {
                       setColorTone(t);
-                      currentNoteRef.current = { ...currentNoteRef.current, colorTone: t };
-                      scheduleSave();
+                      saveImmediately({ colorTone: t });
                     }}
                     className={`w-5 h-5 rounded-full border transition-transform cursor-pointer ${col} ${
                       colorTone === t ? 'ring-2 ring-[#127970] scale-110' : 'opacity-80 hover:opacity-100'
@@ -330,8 +313,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
             onClick={() => {
               const nextFav = !isFavorite;
               setIsFavorite(nextFav);
-              currentNoteRef.current = { ...currentNoteRef.current, isFavorite: nextFav };
-              scheduleSave();
+              saveImmediately({ isFavorite: nextFav });
             }}
             className={`min-h-[40px] min-w-[40px] flex items-center justify-center rounded-xl hover:bg-black/5 transition-colors cursor-pointer ${
               isFavorite ? 'text-amber-500 fill-amber-500' : 'text-[#71827C]'
@@ -345,14 +327,16 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
           {/* Lock Note with PIN */}
           <button
             type="button"
-            onClick={() => onRequestPinModal(note, !note.isLocked)}
+            onClick={() => {
+              onRequestPinModal(getNoteSnapshot(), !isLocked);
+            }}
             className={`min-h-[40px] min-w-[40px] flex items-center justify-center rounded-xl hover:bg-black/5 transition-colors cursor-pointer ${
-              note.isLocked ? 'text-[#127970] bg-[#EBF7F5]' : 'text-[#71827C]'
+              isLocked ? 'text-[#127970] bg-[#EBF7F5]' : 'text-[#71827C]'
             }`}
-            title={note.isLocked ? 'Ubah atau Buka Kunci PIN' : 'Kunci dengan PIN'}
+            title={isLocked ? 'Ubah atau Buka Kunci PIN' : 'Kunci dengan PIN'}
             aria-label="Kunci Catatan"
           >
-            {note.isLocked ? <Lock className="w-4 h-4" /> : <Unlock className="w-4 h-4" />}
+            {isLocked ? <Lock className="w-4 h-4" /> : <Unlock className="w-4 h-4" />}
           </button>
 
           {/* Copy to clipboard */}
@@ -393,11 +377,12 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
             <Printer className="w-4 h-4" />
           </button>
 
-          {/* Done / Save Button */}
+          {/* Done / Save Button (Calls handleSafeClose) */}
           <button
             type="button"
             onClick={handleSafeClose}
-            className="px-4 py-2 rounded-xl bg-[#127970] text-white text-xs font-medium hover:bg-[#10625B] active:scale-95 transition-all flex items-center gap-1.5 shadow-xs cursor-pointer ml-1"
+            className="px-4 py-2 rounded-xl bg-[#127970] text-white text-xs font-semibold hover:bg-[#10625B] active:scale-95 transition-all flex items-center gap-1.5 shadow-xs cursor-pointer ml-1"
+            title="Simpan dan tutup"
           >
             <Check className="w-4 h-4" />
             <span>Selesai</span>
@@ -417,8 +402,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
               onChange={(e) => {
                 const newCat = e.target.value;
                 setCategory(newCat);
-                currentNoteRef.current = { ...currentNoteRef.current, category: newCat };
-                scheduleSave();
+                saveImmediately({ category: newCat });
               }}
               className="px-2.5 py-1.5 rounded-lg bg-white border border-[#E8DDCB] text-xs text-[#1E2B27] font-medium focus:outline-none focus:border-[#127970] cursor-pointer"
             >
@@ -432,20 +416,21 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
 
           <span aria-hidden="true" className="text-[#D8C7AE]">·</span>
 
-          {/* Pin toggle status */}
+          {/* Pin toggle status (Sematkan di Atas) */}
           <button
             type="button"
             onClick={() => {
               const nextPin = !isPinned;
               setIsPinned(nextPin);
-              currentNoteRef.current = { ...currentNoteRef.current, isPinned: nextPin };
-              scheduleSave();
+              saveImmediately({ isPinned: nextPin });
             }}
-            className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
-              isPinned ? 'bg-[#EBF7F5] text-[#10625B]' : 'hover:bg-black/5 text-[#71827C]'
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
+              isPinned ? 'bg-[#EBF7F5] text-[#10625B] border border-[#D2EFEB]' : 'hover:bg-black/5 text-[#71827C] border border-transparent'
             }`}
+            title={isPinned ? 'Lepas sematan' : 'Sematkan di atas'}
           >
-            <span>{isPinned ? 'Disematkan di Atas' : 'Sematkan'}</span>
+            <span className={`w-2 h-2 rounded-full ${isPinned ? 'bg-[#127970]' : 'bg-[#71827C]/40'}`} />
+            <span>{isPinned ? 'Disematkan di Atas' : 'Sematkan ke Atas'}</span>
           </button>
 
           <span aria-hidden="true" className="text-[#D8C7AE]">·</span>
@@ -457,13 +442,17 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
           </div>
         </div>
 
-        {/* 1. Title Input (Prominent & Clean) */}
+        {/* 1. Title Input */}
         <div className="mb-2">
           <input
             type="text"
             value={title}
-            onChange={(e) => handleTitleChange(e.target.value)}
-            onBlur={flushSave}
+            onChange={(e) => {
+              const val = e.target.value;
+              setTitle(val);
+              triggerDebouncedSave({ title: val });
+            }}
+            onBlur={() => saveImmediately({ title })}
             placeholder="Judul Catatan..."
             className="w-full text-2xl sm:text-3xl font-bold text-[#1E2B27] placeholder-[#71827C]/40 bg-transparent border-none focus:outline-none tracking-tight break-words"
           />
@@ -474,7 +463,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
           <button
             type="button"
             onClick={() => insertFormatting('**', '**')}
-            className="px-2 py-1 rounded hover:bg-[#F3ECE0] font-bold text-xs"
+            className="px-2 py-1 rounded hover:bg-[#F3ECE0] font-bold text-xs cursor-pointer"
             title="Tebal (Bold)"
           >
             B
@@ -482,7 +471,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
           <button
             type="button"
             onClick={() => insertFormatting('*', '*')}
-            className="px-2 py-1 rounded hover:bg-[#F3ECE0] italic text-xs"
+            className="px-2 py-1 rounded hover:bg-[#F3ECE0] italic text-xs cursor-pointer"
             title="Miring (Italic)"
           >
             I
@@ -490,7 +479,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
           <button
             type="button"
             onClick={() => insertFormatting('~~', '~~')}
-            className="px-2 py-1 rounded hover:bg-[#F3ECE0] line-through text-xs"
+            className="px-2 py-1 rounded hover:bg-[#F3ECE0] line-through text-xs cursor-pointer"
             title="Coret (Strikethrough)"
           >
             S
@@ -499,7 +488,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
           <button
             type="button"
             onClick={() => insertFormatting('# ')}
-            className="px-2 py-1 rounded hover:bg-[#F3ECE0] font-bold text-xs"
+            className="px-2 py-1 rounded hover:bg-[#F3ECE0] font-bold text-xs cursor-pointer"
             title="Judul Bab 1"
           >
             H1
@@ -507,7 +496,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
           <button
             type="button"
             onClick={() => insertFormatting('## ')}
-            className="px-2 py-1 rounded hover:bg-[#F3ECE0] font-bold text-xs"
+            className="px-2 py-1 rounded hover:bg-[#F3ECE0] font-bold text-xs cursor-pointer"
             title="Judul Bab 2"
           >
             H2
@@ -515,7 +504,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
           <button
             type="button"
             onClick={() => insertFormatting('> ')}
-            className="px-2 py-1 rounded hover:bg-[#F3ECE0] text-xs"
+            className="px-2 py-1 rounded hover:bg-[#F3ECE0] text-xs cursor-pointer"
             title="Kutipan / Quote"
           >
             “ ”
@@ -523,7 +512,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
           <button
             type="button"
             onClick={() => insertFormatting('- ')}
-            className="px-2 py-1 rounded hover:bg-[#F3ECE0] text-xs"
+            className="px-2 py-1 rounded hover:bg-[#F3ECE0] text-xs cursor-pointer"
             title="Daftar Poin"
           >
             • Poin
@@ -531,7 +520,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
           <button
             type="button"
             onClick={() => insertFormatting('1. ')}
-            className="px-2 py-1 rounded hover:bg-[#F3ECE0] text-xs"
+            className="px-2 py-1 rounded hover:bg-[#F3ECE0] text-xs cursor-pointer"
             title="Daftar Nomor"
           >
             1. Angka
@@ -623,13 +612,17 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
           </div>
         )}
 
-        {/* 4. Description / Note Content Area (Directly Below Title & Toolbar) */}
+        {/* 4. Description / Note Content Area */}
         <div className="w-full flex-1 mt-1">
           <textarea
             ref={textareaRef}
             value={content}
-            onChange={(e) => handleContentChange(e.target.value)}
-            onBlur={flushSave}
+            onChange={(e) => {
+              const val = e.target.value;
+              setContent(val);
+              triggerDebouncedSave({ content: val });
+            }}
+            onBlur={() => saveImmediately({ content })}
             placeholder="Tuliskan deskripsi atau isi catatan di sini..."
             className="w-full min-h-[260px] bg-transparent border-none text-[#1E2B27] placeholder-[#71827C]/50 text-sm sm:text-base leading-relaxed focus:outline-none resize-none font-sans font-normal break-words whitespace-pre-wrap block overflow-hidden"
           />

@@ -87,11 +87,8 @@ export default function App() {
 
   const handleSaveNote = (updatedNote: Note) => {
     setNotes((prev) =>
-      prev.map((n) => (n.id === updatedNote.id ? updatedNote : n))
+      prev.map((n) => (n.id === updatedNote.id ? { ...n, ...updatedNote } : n))
     );
-    if (editingNote?.id === updatedNote.id) {
-      setEditingNote(updatedNote);
-    }
   };
 
   const handleTogglePin = (id: string, e: React.MouseEvent) => {
@@ -463,13 +460,28 @@ export default function App() {
               ...pinModalState.targetNote,
               isLocked: hasLock,
               pinCode: newPin || undefined,
+              updatedAt: new Date().toISOString(),
             };
             handleSaveNote(updated);
+            if (editingNote && editingNote.id === updated.id) {
+              setEditingNote(updated);
+            }
           }
         }}
         onSuccess={() => {
           if (!pinModalState.isSettingNewPin && pinModalState.targetNote) {
-            setEditingNote(pinModalState.targetNote);
+            if (editingNote && editingNote.id === pinModalState.targetNote.id) {
+              const unlockedNote: Note = {
+                ...pinModalState.targetNote,
+                isLocked: false,
+                pinCode: undefined,
+                updatedAt: new Date().toISOString(),
+              };
+              handleSaveNote(unlockedNote);
+              setEditingNote(unlockedNote);
+            } else {
+              setEditingNote(pinModalState.targetNote);
+            }
           }
         }}
       />
