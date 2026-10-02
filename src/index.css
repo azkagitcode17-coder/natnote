@@ -1,0 +1,60 @@
+@import "tailwindcss";
+
+@theme {
+  --font-serif: "Capella", "Marcellus", "Cormorant Garamond", Georgia, serif;
+  --font-sans: "Plus Jakarta Sans", system-ui, -apple-system, sans-serif;
+
+  --color-cream-50: #FDFBF7;
+  --color-cream-100: #FAF6EE;
+  --color-cream-200: #F3ECE0;
+  --color-cream-300: #E8DDCB;
+  --color-cream-400: #D8C7AE;
+  --color-cream-500: #C2AE90;
+
+  --color-tosca-50: #EBF7F5;
+  --color-tosca-100: #D2EFEB;
+  --color-tosca-200: #ABE1D9;
+  --color-tosca-300: #79CBC1;
+  --color-tosca-400: #45AEA4;
+  --color-tosca-500: #199489;
+  --color-tosca-600: #127970;
+  --color-tosca-700: #10625B;
+  --color-tosca-800: #104E49;
+  --color-tosca-900: #0F423E;
+  --color-tosca-950: #062624;
+}
+
+/* Custom scrollbar for minimalist look */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(18, 121, 112, 0.18);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(18, 121, 112, 0.35);
+}
+
+/* Prevent unwanted callouts and highlights on mobile touch */
+input, textarea, button {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Print view optimization */
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  body {
+    background: white !important;
+    color: black !important;
+  }
+}

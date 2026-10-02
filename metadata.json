@@ -1,0 +1,6 @@
+{
+  "name": "RuangCatat - Catatan Pribadi Minimalis",
+  "description": "Aplikasi catatan pribadi minimalis, bersih, dan elegan dengan aksen putih cream dan hijau tosca. Responsif untuk HP, tablet, dan PC.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
