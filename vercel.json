@@ -1,5 +1,3 @@
 {
-  "installCommand": "echo 'No npm install needed'",
-  "buildCommand": "echo 'Using prebuilt dist'",
-  "outputDirectory": "dist"
+  "framework": "vite"
 }
