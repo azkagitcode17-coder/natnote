@@ -158,7 +158,7 @@ export const NoteCard: React.FC<NoteCardProps> = ({
             )}
 
             {/* Note text description without being awkwardly cut off */}
-            {note.content && (!hasChecklists || note.content.length > 15) && (
+            {note.content && note.content.trim().length > 0 && (
               <div className="mb-3">
                 <p 
                   className={`text-xs sm:text-[13px] text-[#3A4B45] leading-relaxed whitespace-pre-line font-sans font-normal break-words ${

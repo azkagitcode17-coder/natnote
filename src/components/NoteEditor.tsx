@@ -24,13 +24,13 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
   onDelete,
   onRequestPinModal,
 }) => {
-  const [title, setTitle] = useState(note.title);
-  const [content, setContent] = useState(note.content);
+  const [title, setTitle] = useState(note.title || '');
+  const [content, setContent] = useState(note.content || '');
   const [category, setCategory] = useState(note.category || 'Catatan Pribadi');
   const [tags, setTags] = useState<string[]>(note.tags || []);
   const [tagInput, setTagInput] = useState('');
-  const [isFavorite, setIsFavorite] = useState(note.isFavorite);
-  const [isPinned, setIsPinned] = useState(note.isPinned);
+  const [isFavorite, setIsFavorite] = useState(note.isFavorite || false);
+  const [isPinned, setIsPinned] = useState(note.isPinned || false);
   const [colorTone, setColorTone] = useState<NoteColorTone>(note.colorTone || 'default');
   const [checklists, setChecklists] = useState<ChecklistItem[]>(note.checklists || []);
   const [newChecklistText, setNewChecklistText] = useState('');
@@ -42,48 +42,109 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const saveTimeoutRef = useRef<number | null>(null);
 
-  const triggerAutoSave = (updatedFields: Partial<Note>) => {
-    setIsSaving(true);
-    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+  // Synchronous reference to always have the latest note state
+  const currentNoteRef = useRef<Note>({
+    ...note,
+    title: note.title || '',
+    content: note.content || '',
+    category: note.category || 'Catatan Pribadi',
+    tags: note.tags || [],
+    isFavorite: note.isFavorite || false,
+    isPinned: note.isPinned || false,
+    colorTone: note.colorTone || 'default',
+    checklists: note.checklists || [],
+  });
 
-    saveTimeoutRef.current = window.setTimeout(() => {
-      const updated: Note = {
-        ...note,
-        title,
-        content,
-        category,
-        tags,
-        isFavorite,
-        isPinned,
-        colorTone,
-        checklists,
-        ...updatedFields,
-        updatedAt: new Date().toISOString(),
-      };
-      onSave(updated);
-      setIsSaving(false);
-      setLastSavedTime('Tersimpan otomatis');
-    }, 500);
+  // Flush immediate save
+  const flushSave = () => {
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+      saveTimeoutRef.current = null;
+    }
+    const snapshot: Note = {
+      ...currentNoteRef.current,
+      updatedAt: new Date().toISOString(),
+    };
+    currentNoteRef.current = snapshot;
+    onSave(snapshot);
+    setIsSaving(false);
+    setLastSavedTime('Tersimpan otomatis');
   };
 
-  // Keep state updated if note prop changes
+  // Debounced background save
+  const scheduleSave = () => {
+    setIsSaving(true);
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+    }
+    saveTimeoutRef.current = window.setTimeout(() => {
+      flushSave();
+    }, 400);
+  };
+
+  // Safe close that guarantees saving before exit
+  const handleSafeClose = () => {
+    flushSave();
+    onClose();
+  };
+
+  // Keep state updated if note.id switches
   useEffect(() => {
-    setTitle(note.title);
-    setContent(note.content);
-    setCategory(note.category);
+    setTitle(note.title || '');
+    setContent(note.content || '');
+    setCategory(note.category || 'Catatan Pribadi');
     setTags(note.tags || []);
-    setIsFavorite(note.isFavorite);
-    setIsPinned(note.isPinned);
+    setIsFavorite(note.isFavorite || false);
+    setIsPinned(note.isPinned || false);
     setColorTone(note.colorTone || 'default');
     setChecklists(note.checklists || []);
     setShowChecklistMode((note.checklists && note.checklists.length > 0) || false);
+
+    currentNoteRef.current = {
+      ...note,
+      title: note.title || '',
+      content: note.content || '',
+      category: note.category || 'Catatan Pribadi',
+      tags: note.tags || [],
+      isFavorite: note.isFavorite || false,
+      isPinned: note.isPinned || false,
+      colorTone: note.colorTone || 'default',
+      checklists: note.checklists || [],
+    };
   }, [note.id]);
 
-  // Auto-resize textarea so content is never cut off
+  // Clean up and ensure data is saved when component unmounts
+  useEffect(() => {
+    return () => {
+      flushSave();
+    };
+  }, []);
+
+  // Title change handler
+  const handleTitleChange = (val: string) => {
+    setTitle(val);
+    currentNoteRef.current = {
+      ...currentNoteRef.current,
+      title: val,
+    };
+    scheduleSave();
+  };
+
+  // Description / Content change handler
+  const handleContentChange = (val: string) => {
+    setContent(val);
+    currentNoteRef.current = {
+      ...currentNoteRef.current,
+      content: val,
+    };
+    scheduleSave();
+  };
+
+  // Auto-resize textarea so content expands naturally
   useEffect(() => {
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
-      textareaRef.current.style.height = `${Math.max(textareaRef.current.scrollHeight, 280)}px`;
+      textareaRef.current.style.height = `${Math.max(textareaRef.current.scrollHeight, 220)}px`;
     }
   }, [content]);
 
@@ -97,8 +158,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
     const selectedText = currentText.substring(start, end);
     const newText = currentText.substring(0, start) + prefix + selectedText + suffix + currentText.substring(end);
     
-    setContent(newText);
-    triggerAutoSave({ content: newText });
+    handleContentChange(newText);
 
     setTimeout(() => {
       el.focus();
@@ -114,7 +174,8 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
       if (clean && !tags.includes(clean)) {
         const nextTags = [...tags, clean];
         setTags(nextTags);
-        triggerAutoSave({ tags: nextTags });
+        currentNoteRef.current = { ...currentNoteRef.current, tags: nextTags };
+        scheduleSave();
       }
       setTagInput('');
     }
@@ -123,7 +184,8 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
   const handleRemoveTag = (tagToRemove: string) => {
     const nextTags = tags.filter((t) => t !== tagToRemove);
     setTags(nextTags);
-    triggerAutoSave({ tags: nextTags });
+    currentNoteRef.current = { ...currentNoteRef.current, tags: nextTags };
+    scheduleSave();
   };
 
   // Checklist actions
@@ -138,7 +200,8 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
     const nextChecklists = [...checklists, newItem];
     setChecklists(nextChecklists);
     setNewChecklistText('');
-    triggerAutoSave({ checklists: nextChecklists });
+    currentNoteRef.current = { ...currentNoteRef.current, checklists: nextChecklists };
+    scheduleSave();
   };
 
   const handleToggleChecklist = (id: string) => {
@@ -146,13 +209,15 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
       c.id === id ? { ...c, done: !c.done } : c
     );
     setChecklists(nextChecklists);
-    triggerAutoSave({ checklists: nextChecklists });
+    currentNoteRef.current = { ...currentNoteRef.current, checklists: nextChecklists };
+    scheduleSave();
   };
 
   const handleDeleteChecklist = (id: string) => {
     const nextChecklists = checklists.filter((c) => c.id !== id);
     setChecklists(nextChecklists);
-    triggerAutoSave({ checklists: nextChecklists });
+    currentNoteRef.current = { ...currentNoteRef.current, checklists: nextChecklists };
+    scheduleSave();
   };
 
   // Export note actions
@@ -207,18 +272,19 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
 
   return (
     <div className={`fixed inset-0 z-40 flex flex-col ${containerBg} text-[#1E2B27] transition-colors duration-200 overflow-y-auto`}>
-      {/* Editor Top Navigation Bar (Ergonomic single row) */}
-      <header className="sticky top-0 z-30 bg-[#FAF8F5]/95 backdrop-blur-md border-b border-[#E8DDCB] px-3 sm:px-6 py-2.5 flex items-center justify-between no-print">
+      {/* Editor Top Navigation Bar */}
+      <header className="sticky top-0 z-30 bg-[#FAF8F5]/95 backdrop-blur-md border-b border-[#E8DDCB] px-3 sm:px-6 py-2.5 flex items-center justify-between no-print shadow-xs">
         <div className="flex items-center gap-2">
           <button
-            onClick={onClose}
+            onClick={handleSafeClose}
             className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl text-[#10625B] hover:bg-[#E8DDCB]/50 transition-colors cursor-pointer"
             aria-label="Kembali ke daftar catatan"
+            title="Kembali dan simpan"
           >
             <ArrowLeft className="w-5 h-5" />
           </button>
           <div className="hidden sm:flex flex-col">
-            <span className="font-serif text-sm font-semibold text-[#10625B] truncate max-w-[200px]">
+            <span className="font-semibold text-sm text-[#10625B] truncate max-w-[200px]">
               {title || 'Catatan Baru'}
             </span>
             <span className="text-[10px] text-[#71827C] flex items-center gap-1">
@@ -245,9 +311,10 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
                     type="button"
                     onClick={() => {
                       setColorTone(t);
-                      triggerAutoSave({ colorTone: t });
+                      currentNoteRef.current = { ...currentNoteRef.current, colorTone: t };
+                      scheduleSave();
                     }}
-                    className={`w-5 h-5 rounded-full border transition-transform ${col} ${
+                    className={`w-5 h-5 rounded-full border transition-transform cursor-pointer ${col} ${
                       colorTone === t ? 'ring-2 ring-[#127970] scale-110' : 'opacity-80 hover:opacity-100'
                     }`}
                     title={`Warna: ${t}`}
@@ -263,7 +330,8 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
             onClick={() => {
               const nextFav = !isFavorite;
               setIsFavorite(nextFav);
-              triggerAutoSave({ isFavorite: nextFav });
+              currentNoteRef.current = { ...currentNoteRef.current, isFavorite: nextFav };
+              scheduleSave();
             }}
             className={`min-h-[40px] min-w-[40px] flex items-center justify-center rounded-xl hover:bg-black/5 transition-colors cursor-pointer ${
               isFavorite ? 'text-amber-500 fill-amber-500' : 'text-[#71827C]'
@@ -325,21 +393,21 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
             <Printer className="w-4 h-4" />
           </button>
 
-          {/* Done / Save Button in Tosca Green */}
+          {/* Done / Save Button */}
           <button
             type="button"
-            onClick={onClose}
+            onClick={handleSafeClose}
             className="px-4 py-2 rounded-xl bg-[#127970] text-white text-xs font-medium hover:bg-[#10625B] active:scale-95 transition-all flex items-center gap-1.5 shadow-xs cursor-pointer ml-1"
           >
             <Check className="w-4 h-4" />
-            <span className="hidden sm:inline">Selesai</span>
+            <span>Selesai</span>
           </button>
         </div>
       </header>
 
       {/* Editor Main Canvas */}
       <main className="flex-1 max-w-3xl w-full mx-auto px-4 sm:px-8 py-6 pb-28 flex flex-col">
-        {/* Category & Tags Row */}
+        {/* Category & Info Row */}
         <div className="flex flex-wrap items-center gap-3 pb-4 mb-4 border-b border-[#E8DDCB]/60 text-xs text-[#71827C] no-print">
           {/* Category selection */}
           <div className="flex items-center gap-2">
@@ -347,10 +415,12 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
             <select
               value={category}
               onChange={(e) => {
-                setCategory(e.target.value);
-                triggerAutoSave({ category: e.target.value });
+                const newCat = e.target.value;
+                setCategory(newCat);
+                currentNoteRef.current = { ...currentNoteRef.current, category: newCat };
+                scheduleSave();
               }}
-              className="px-2.5 py-1.5 rounded-lg bg-white border border-[#E8DDCB] text-xs text-[#1E2B27] font-medium focus:outline-none focus:border-[#127970]"
+              className="px-2.5 py-1.5 rounded-lg bg-white border border-[#E8DDCB] text-xs text-[#1E2B27] font-medium focus:outline-none focus:border-[#127970] cursor-pointer"
             >
               {categories.map((c) => (
                 <option key={c.id} value={c.name}>
@@ -368,9 +438,10 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
             onClick={() => {
               const nextPin = !isPinned;
               setIsPinned(nextPin);
-              triggerAutoSave({ isPinned: nextPin });
+              currentNoteRef.current = { ...currentNoteRef.current, isPinned: nextPin };
+              scheduleSave();
             }}
-            className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${
+            className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
               isPinned ? 'bg-[#EBF7F5] text-[#10625B]' : 'hover:bg-black/5 text-[#71827C]'
             }`}
           >
@@ -382,55 +453,28 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
           {/* Time display */}
           <div className="flex items-center gap-1 text-[11px] text-[#71827C]">
             <Clock className="w-3.5 h-3.5" />
-            <span>{formatDateDetailed(note.updatedAt)}</span>
+            <span>{formatDateDetailed(note.updatedAt || new Date().toISOString())}</span>
           </div>
         </div>
 
-        {/* Title Input (Capella / Serif typography) */}
-        <input
-          type="text"
-          value={title}
-          onChange={(e) => {
-            setTitle(e.target.value);
-            triggerAutoSave({ title: e.target.value });
-          }}
-          placeholder="Judul Catatan..."
-          className="w-full font-serif text-2xl sm:text-3xl font-bold text-[#1E2B27] placeholder-[#71827C]/40 bg-transparent border-none focus:outline-none tracking-tight mb-4 break-words"
-        />
-
-        {/* Tags management */}
-        <div className="flex flex-wrap items-center gap-1.5 mb-5 no-print">
-          {tags.map((t) => (
-            <span
-              key={t}
-              className="inline-flex items-center gap-1 text-xs text-[#10625B] bg-[#EBF7F5] border border-[#D2EFEB] px-2.5 py-0.5 rounded-full"
-            >
-              <span>#{t}</span>
-              <button
-                type="button"
-                onClick={() => handleRemoveTag(t)}
-                className="hover:text-rose-600 transition-colors"
-              >
-                <X className="w-3 h-3" />
-              </button>
-            </span>
-          ))}
+        {/* 1. Title Input (Prominent & Clean) */}
+        <div className="mb-2">
           <input
             type="text"
-            value={tagInput}
-            onChange={(e) => setTagInput(e.target.value)}
-            onKeyDown={handleAddTag}
-            placeholder="+ Tambah tag (Enter)"
-            className="text-xs bg-transparent border-none text-[#1E2B27] placeholder-[#71827C]/50 px-2 py-0.5 focus:outline-none max-w-[150px]"
+            value={title}
+            onChange={(e) => handleTitleChange(e.target.value)}
+            onBlur={flushSave}
+            placeholder="Judul Catatan..."
+            className="w-full text-2xl sm:text-3xl font-bold text-[#1E2B27] placeholder-[#71827C]/40 bg-transparent border-none focus:outline-none tracking-tight break-words"
           />
         </div>
 
-        {/* Formatting Toolbar */}
-        <div className="flex items-center flex-wrap gap-1 py-2 px-2.5 rounded-xl bg-white/80 border border-[#E8DDCB] mb-4 text-[#3A4B45] text-xs no-print">
+        {/* 2. Formatting Toolbar */}
+        <div className="flex items-center flex-wrap gap-1 py-1.5 px-2 rounded-xl bg-white/80 border border-[#E8DDCB] my-3 text-[#3A4B45] text-xs no-print shadow-xs">
           <button
             type="button"
             onClick={() => insertFormatting('**', '**')}
-            className="px-2.5 py-1 rounded hover:bg-[#F3ECE0] font-bold text-xs"
+            className="px-2 py-1 rounded hover:bg-[#F3ECE0] font-bold text-xs"
             title="Tebal (Bold)"
           >
             B
@@ -438,7 +482,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
           <button
             type="button"
             onClick={() => insertFormatting('*', '*')}
-            className="px-2.5 py-1 rounded hover:bg-[#F3ECE0] italic text-xs"
+            className="px-2 py-1 rounded hover:bg-[#F3ECE0] italic text-xs"
             title="Miring (Italic)"
           >
             I
@@ -446,16 +490,16 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
           <button
             type="button"
             onClick={() => insertFormatting('~~', '~~')}
-            className="px-2.5 py-1 rounded hover:bg-[#F3ECE0] line-through text-xs"
+            className="px-2 py-1 rounded hover:bg-[#F3ECE0] line-through text-xs"
             title="Coret (Strikethrough)"
           >
             S
           </button>
-          <div className="w-px h-4 bg-[#E8DDCB] mx-1" />
+          <div className="w-px h-3.5 bg-[#E8DDCB] mx-1" />
           <button
             type="button"
             onClick={() => insertFormatting('# ')}
-            className="px-2.5 py-1 rounded hover:bg-[#F3ECE0] font-serif font-bold text-xs"
+            className="px-2 py-1 rounded hover:bg-[#F3ECE0] font-bold text-xs"
             title="Judul Bab 1"
           >
             H1
@@ -463,7 +507,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
           <button
             type="button"
             onClick={() => insertFormatting('## ')}
-            className="px-2.5 py-1 rounded hover:bg-[#F3ECE0] font-serif font-bold text-xs"
+            className="px-2 py-1 rounded hover:bg-[#F3ECE0] font-bold text-xs"
             title="Judul Bab 2"
           >
             H2
@@ -471,7 +515,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
           <button
             type="button"
             onClick={() => insertFormatting('> ')}
-            className="px-2.5 py-1 rounded hover:bg-[#F3ECE0] text-xs"
+            className="px-2 py-1 rounded hover:bg-[#F3ECE0] text-xs"
             title="Kutipan / Quote"
           >
             “ ”
@@ -479,7 +523,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
           <button
             type="button"
             onClick={() => insertFormatting('- ')}
-            className="px-2.5 py-1 rounded hover:bg-[#F3ECE0] text-xs"
+            className="px-2 py-1 rounded hover:bg-[#F3ECE0] text-xs"
             title="Daftar Poin"
           >
             • Poin
@@ -487,13 +531,13 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
           <button
             type="button"
             onClick={() => insertFormatting('1. ')}
-            className="px-2.5 py-1 rounded hover:bg-[#F3ECE0] text-xs"
+            className="px-2 py-1 rounded hover:bg-[#F3ECE0] text-xs"
             title="Daftar Nomor"
           >
             1. Angka
           </button>
 
-          <div className="w-px h-4 bg-[#E8DDCB] mx-1" />
+          <div className="w-px h-3.5 bg-[#E8DDCB] mx-1" />
 
           {/* Checklist Mode toggle button */}
           <button
@@ -501,7 +545,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
             onClick={() => {
               setShowChecklistMode(!showChecklistMode);
             }}
-            className={`px-3 py-1 rounded-lg flex items-center gap-1.5 transition-colors font-medium ${
+            className={`px-2.5 py-1 rounded-lg flex items-center gap-1.5 transition-colors font-medium cursor-pointer ${
               showChecklistMode
                 ? 'bg-[#127970] text-white shadow-xs'
                 : 'hover:bg-[#F3ECE0] text-[#10625B]'
@@ -509,13 +553,13 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
             title="Aktifkan Mode Checklist"
           >
             <CheckSquare className="w-3.5 h-3.5" />
-            <span>Tugas / Checklist</span>
+            <span>Checklist</span>
           </button>
         </div>
 
-        {/* Interactive Checklist Editor */}
+        {/* 3. Interactive Checklist Area (if enabled) */}
         {showChecklistMode && (
-          <div className="mb-6 p-4 rounded-2xl bg-white border border-[#E8DDCB] shadow-xs">
+          <div className="mb-4 p-4 rounded-2xl bg-white border border-[#E8DDCB] shadow-xs">
             <div className="flex items-center justify-between mb-3 text-xs text-[#71827C]">
               <span className="font-semibold text-[#10625B] flex items-center gap-1.5">
                 <CheckSquare className="w-4 h-4 text-[#127970]" />
@@ -551,7 +595,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
                   <button
                     type="button"
                     onClick={() => handleDeleteChecklist(item.id)}
-                    className="opacity-40 group-hover:opacity-100 text-[#71827C] hover:text-rose-600 p-1 transition-opacity"
+                    className="opacity-40 group-hover:opacity-100 text-[#71827C] hover:text-rose-600 p-1 transition-opacity cursor-pointer"
                     title="Hapus tugas"
                   >
                     <X className="w-3.5 h-3.5" />
@@ -579,22 +623,48 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
           </div>
         )}
 
-        {/* Freeform Body Prose Textarea with Auto-expand & No cutting off */}
-        <div className="w-full flex-1">
+        {/* 4. Description / Note Content Area (Directly Below Title & Toolbar) */}
+        <div className="w-full flex-1 mt-1">
           <textarea
             ref={textareaRef}
             value={content}
-            onChange={(e) => {
-              setContent(e.target.value);
-              triggerAutoSave({ content: e.target.value });
-            }}
-            placeholder="Mulai tuliskan pikiran, ide, atau cerita Anda di sini..."
-            className="w-full min-h-[300px] bg-transparent border-none text-[#1E2B27] placeholder-[#71827C]/40 text-sm sm:text-base leading-relaxed focus:outline-none resize-none font-sans font-normal break-words whitespace-pre-wrap block overflow-hidden"
+            onChange={(e) => handleContentChange(e.target.value)}
+            onBlur={flushSave}
+            placeholder="Tuliskan deskripsi atau isi catatan di sini..."
+            className="w-full min-h-[260px] bg-transparent border-none text-[#1E2B27] placeholder-[#71827C]/50 text-sm sm:text-base leading-relaxed focus:outline-none resize-none font-sans font-normal break-words whitespace-pre-wrap block overflow-hidden"
+          />
+        </div>
+
+        {/* 5. Tags management */}
+        <div className="flex flex-wrap items-center gap-1.5 mt-4 pt-3 border-t border-[#E8DDCB]/40 no-print">
+          <span className="text-[11px] text-[#71827C] font-medium mr-1">Tag:</span>
+          {tags.map((t) => (
+            <span
+              key={t}
+              className="inline-flex items-center gap-1 text-xs text-[#10625B] bg-[#EBF7F5] border border-[#D2EFEB] px-2.5 py-0.5 rounded-full"
+            >
+              <span>#{t}</span>
+              <button
+                type="button"
+                onClick={() => handleRemoveTag(t)}
+                className="hover:text-rose-600 transition-colors cursor-pointer"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            </span>
+          ))}
+          <input
+            type="text"
+            value={tagInput}
+            onChange={(e) => setTagInput(e.target.value)}
+            onKeyDown={handleAddTag}
+            placeholder="+ Tambah tag (Enter)"
+            className="text-xs bg-transparent border-none text-[#1E2B27] placeholder-[#71827C]/50 px-2 py-0.5 focus:outline-none max-w-[150px]"
           />
         </div>
 
         {/* Footer Statistics */}
-        <footer className="pt-4 mt-8 border-t border-[#E8DDCB]/60 flex items-center justify-between text-[11px] text-[#71827C] no-print">
+        <footer className="pt-4 mt-6 border-t border-[#E8DDCB]/60 flex items-center justify-between text-[11px] text-[#71827C] no-print">
           <div className="flex items-center gap-3">
             <span>{wordCount} kata</span>
             <span aria-hidden="true">·</span>
@@ -612,7 +682,7 @@ export const NoteEditor: React.FC<NoteEditorProps> = ({
                   onClose();
                 }
               }}
-              className="text-[#71827C] hover:text-rose-600 transition-colors flex items-center gap-1"
+              className="text-[#71827C] hover:text-rose-600 transition-colors flex items-center gap-1 cursor-pointer"
             >
               <Trash2 className="w-3.5 h-3.5" />
               <span>Hapus Catatan</span>
